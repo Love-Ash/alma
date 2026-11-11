@@ -1,0 +1,4 @@
+<resources>
+    <string name="observation_summary">%1$s  /  수면 추정 %2$s</string>
+    <string name="pairing_details">%1$s:8787\n연결 키  %2$s</string>
+</resources>
