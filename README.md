@@ -1,32 +1,47 @@
-# 곁
+# Alma(알마) 설치 및 실행
 
-뒷좌석 아이가 잠드는 듯하면 연결한 기기의 영상 소리와 밝기를 낮추고, 확인이 필요한 자세 변화를 앞좌석에 알리는 차량용 앱입니다.
+팀 With(위드)
 
-## 설치와 실행
+알마는 뒷좌석 아이가 잠드는 듯할 때 휴대폰에서 재생 중인 영상의 소리를 낮추고 앱 화면을 어둡게 합니다. 운전자는 주차한 뒤 아이의 모습이 담긴 최근 카메라 화면을 확인할 수 있습니다.
 
-1. `apk/Gyeot_Gyeot_release.apk`는 차량 앱입니다. `apk/Gyeot_Companion_release.apk`는 전면 카메라가 있는 Android 휴대폰에 설치합니다.
-2. 같은 신뢰할 수 있는 테스트 네트워크에 두 기기를 연결합니다. 휴대폰에서 곁 연결 앱을 열고 카메라를 허용한 뒤 얼굴이 화면에 들어오도록 기기를 고정합니다.
-3. 휴대폰 앱에서 영상 파일을 고릅니다. `demo/sample.mp4`로 재생을 시험할 수 있습니다. 재생, 멈춤, 소리 줄이기는 이 앱에서 고른 영상에 적용됩니다.
-4. 차량 앱에 휴대폰 화면의 주소와 연결 키를 입력합니다. 휴대폰 앱을 앞에 띄워 두세요. 화면을 벗어나면 관찰과 연결이 끝나고 다시 열 때 새 키가 발급됩니다.
-5. 카메라 없이 시험하려면 시연 입력을 켭니다. 눈 감김, 눈 뜸, 자세 변화, 구토 의심, 얼굴 가림을 선택할 수 있습니다. 수면과 자세는 일정 시간 변화가 이어진 뒤 화면에 반영됩니다.
+| 설치 위치 | 서명 APK | 시험 환경 |
+| --- | --- | --- |
+| 차량 | [With_Alma_release.apk](apk/With_Alma_release.apk) | Pleos Connect Emulator 2.1.0, Android API 34, 2560 × 1440 가로 화면 |
+| 뒷좌석 휴대폰 | [With_AlmaCompanion_release.apk](apk/With_AlmaCompanion_release.apk) | Android API 34, 1080 × 2400 세로 화면, 전면 카메라 |
 
-휴대폰에서 미리보기 공유를 켜면 차량 앱이 최근 카메라 화면을 요청할 수 있습니다. 차량 앱은 Pleos P 기어 신호와 Android Automotive 화면 제한을 함께 확인합니다. 프리뷰는 허용된 주차 상태에서만 표시합니다.
+## 두 앱 연결
 
-## 빌드와 테스트 환경
+두 에뮬레이터를 실행한 뒤 압축을 푼 폴더에서 아래 명령을 실행합니다. `CAR_SERIAL`과 `PHONE_SERIAL`은 `adb devices`에 나온 각 기기의 ID로 바꿉니다. 차량 앱 설치 명령의 `CAR_USER_ID`에는 바로 앞 명령으로 확인한 숫자를 넣습니다.
 
-| 항목 | 설정 |
-|---|---|
-| 빌드 | Java 17 소스 호환, Android SDK 36, 최소 API 28, Gradle Wrapper 8.14.3 |
-| Pleos Connect SDK | Vehicle 2.3.2, SpeechToText 및 TextToSpeech 3.3.1 |
-| Pleos 검증 대상 | Connect Emulator 2.1.0, Android API 34. 전용 이미지에서 구동과 화면 규격 확인 대기 |
-| 실행 확인 환경 | 일반 Android API 34 두 대. 차량 앱 1600 × 900 가로 화면, 휴대폰 앱 1080 × 2400 세로 화면 |
-| 로컬 연결 | 동일 네트워크, TCP 8787, 화면에 발급되는 연결 키 |
+```text
+adb devices
+adb -s CAR_SERIAL shell am get-current-user
+adb -s CAR_SERIAL install -r --user CAR_USER_ID apk/With_Alma_release.apk
+adb -s PHONE_SERIAL install -r apk/With_AlmaCompanion_release.apk
+adb -s PHONE_SERIAL forward --no-rebind tcp:18787 tcp:8787
+adb -s CAR_SERIAL reverse --no-rebind tcp:8787 tcp:18787
+adb -s CAR_SERIAL forward --no-rebind tcp:18088 tcp:8088
+```
 
-Android Studio에서 저장소를 열고 Gradle 동기화를 실행합니다. 명령줄에서는 `gradlew.bat :vehicle:assembleDebug :companion:assembleDebug`를 사용합니다. SDK는 Gradle이 공식 저장소에서 받습니다. [Pleos 에뮬레이터 설치 안내](https://document.pleos.ai/en/docs/connect/guide/getting-started/application-development/setup-connect-sdk-emulator)
+1. 휴대폰에서 Alma 연결을 열고 카메라 사용을 허용합니다. 재생 제어를 시험할 때는 기기에 넣어 둔 MP4를 앱에서 골라 재생합니다.
+2. Pleos 기어를 P에 두고 차량 앱에서 연결 설정을 엽니다. 휴대폰 주소 칸에 `127.0.0.1`을 입력하고 Alma 연결 화면에 표시된 연결 키를 넣은 뒤 휴대폰 연결을 누릅니다.
 
-## 확인한 범위
+## 주차 미리보기 확인
 
-- Android API 34 에뮬레이터의 합성 카메라 프레임으로 CameraX와 ML Kit 분석 경로를 확인했습니다. 실제 아동의 수면과 자세 추정 정확도는 측정 전입니다.
-- 구토 의심 알림은 수동 시연 입력으로 발생합니다. 수면 시간은 얼굴을 관찰한 구간의 추정치입니다.
-- 음성 인식과 안내, P 기어와 주행 제한 전환은 Pleos 전용 환경에서 추가 확인이 필요합니다.
-- 미리보기 공유의 기본값은 꺼짐입니다. 휴대폰은 최근 화면을 메모리에 두며 전송에는 로컬 HTTP를 사용합니다.
+1. 휴대폰에서 차량에 카메라 미리보기 공유를 켭니다. 차량 앱에서 아이 화면 확인을 누르면 최근 사진 한 장이 5초간 표시됩니다. 다시 누르면 새 사진을 가져옵니다.
+2. 브라우저에서 `http://127.0.0.1:18088`을 엽니다. 사진이 보일 때 Virtual Console에서 기어를 D로 바꾸면 사진과 미리보기 버튼이 함께 사라집니다.
+3. P로 돌아와도 사진은 닫혀 있습니다. 아이 화면 확인을 다시 눌러 엽니다.
+
+## 재생 제어와 상태 알림
+
+휴대폰에서 MP4를 재생하고 차량 화면에서 음성으로 요청을 누릅니다. 멈춰줘, 영상 틀어줘를 차례로 말하고 휴대폰에서 영상이 멈췄다가 이어지는지 확인합니다.
+
+휴대폰 전면 카메라에 얼굴을 비추면 앱이 기준 자세를 잡습니다. 자세를 바꾸고 싶을 때는 카메라 기준 자세 다시 맞추기를 누릅니다. 기준보다 고개를 크게 숙인 상태가 이어지면 자세 확인 알림이 뜹니다.
+
+카메라 없이 수면 전환을 재현하려면 Alma 연결에서 시연 입력 사용을 켠 뒤 눈 감김 또는 눈 뜸을 선택합니다. 구토 의심 안내는 같은 메뉴에서 구토 의심 사건 넣기를 눌러 수동으로 재현합니다.
+
+## 소스 빌드
+
+Android Studio에서 압축을 푼 폴더를 열어 Gradle 동기화를 실행합니다. Windows 명령줄에서는 `gradlew.bat :vehicle:assembleDebug :companion:assembleDebug`로 두 앱을 빌드할 수 있습니다. Android SDK 36, Java 17, Gradle Wrapper 8.14.3을 사용합니다. Gradle은 Pleos 음성 SDK를 공식 저장소에서 받습니다.
+
+[공식 Pleos 에뮬레이터 설치 안내](https://document.pleos.ai/en/docs/connect/guide/getting-started/application-development/setup-connect-sdk-emulator)

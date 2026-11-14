@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="connection_status" type="id" />
+    <item name="observation_status" type="id" />
+    <item name="observed_sleep" type="id" />
+    <item name="media_status" type="id" />
+    <item name="vehicle_status" type="id" />
+    <item name="preview_action" type="id" />
+    <item name="preview_image" type="id" />
+    <item name="voice_action" type="id" />
+    <item name="pause_action" type="id" />
+    <item name="connection_settings_action" type="id" />
+    <item name="seat_map" type="id" />
+    <item name="pairing_host" type="id" />
+    <item name="pairing_token" type="id" />
+    <item name="pair_action" type="id" />
+</resources>

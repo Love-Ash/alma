@@ -8,9 +8,15 @@ import java.util.Objects;
 public final class CareEngine {
     private static final int ALERT_LIMIT = 32;
     private static final long ALERT_COOLDOWN_MS = 30_000;
+    private static final long POSTURE_REFERENCE_MS = 600;
+    private static final long POSTURE_FRAME_GAP_MS = 1_000;
+    private static final float POSTURE_REFERENCE_JITTER_DEGREES = 6f;
+    private static final float POSTURE_MAX_YAW_DEGREES = 25f;
 
     public enum SleepState { UNKNOWN, AWAKE, FALLING_ASLEEP, ASLEEP }
     public enum AlertKind { POSTURE, VOMIT_SUSPECTED, VISIBILITY, SLEEP, WAKE }
+    public enum PostureState { UNOBSERVABLE, CALIBRATING, OBSERVED }
+    private enum PostureDirection { DOWN, UP, SIDE }
 
     public static final class Config {
         public final long sleepAfterMs;
@@ -47,15 +53,22 @@ public final class CareEngine {
         public final float rightEyeOpen;
         public final float pitchDegrees;
         public final float rollDegrees;
+        public final float yawDegrees;
 
         public Frame(long timestampMs, boolean visible, float leftEyeOpen, float rightEyeOpen,
                 float pitchDegrees, float rollDegrees) {
+            this(timestampMs, visible, leftEyeOpen, rightEyeOpen, pitchDegrees, rollDegrees, 0);
+        }
+
+        public Frame(long timestampMs, boolean visible, float leftEyeOpen, float rightEyeOpen,
+                float pitchDegrees, float rollDegrees, float yawDegrees) {
             this.timestampMs = timestampMs;
             this.visible = visible;
             this.leftEyeOpen = leftEyeOpen;
             this.rightEyeOpen = rightEyeOpen;
             this.pitchDegrees = pitchDegrees;
             this.rollDegrees = rollDegrees;
+            this.yawDegrees = yawDegrees;
         }
     }
 
@@ -73,28 +86,54 @@ public final class CareEngine {
         }
     }
 
+    public static final class Interval {
+        public final long startMs;
+        public final long endMs;
+
+        private Interval(long startMs, long endMs) {
+            this.startMs = startMs;
+            this.endMs = endMs;
+        }
+    }
+
     public static final class Result {
         public final SleepState sleepState;
         public final long totalSleepMs;
         public final long sleepStartedAtMs;
         public final List<Alert> alerts;
         public final boolean requestQuiet;
+        public final List<Interval> sleepIntervals;
+        public final List<Interval> observationGaps;
+        public final Interval currentSleepInterval;
+        public final Interval currentObservationGap;
+        public final PostureState postureState;
 
         private Result(SleepState sleepState, long totalSleepMs, long sleepStartedAtMs,
-                List<Alert> alerts, boolean requestQuiet) {
+                List<Alert> alerts, boolean requestQuiet, List<Interval> sleepIntervals,
+                List<Interval> observationGaps, Interval currentSleepInterval,
+                Interval currentObservationGap, PostureState postureState) {
             this.sleepState = sleepState;
             this.totalSleepMs = totalSleepMs;
             this.sleepStartedAtMs = sleepStartedAtMs;
             this.alerts = alerts;
             this.requestQuiet = requestQuiet;
+            this.sleepIntervals = sleepIntervals;
+            this.observationGaps = observationGaps;
+            this.currentSleepInterval = currentSleepInterval;
+            this.currentObservationGap = currentObservationGap;
+            this.postureState = postureState;
         }
     }
 
     private final Config config;
     private final List<Alert> alerts = new ArrayList<>();
+    private final List<Interval> sleepIntervals = new ArrayList<>();
+    private final List<Interval> observationGaps = new ArrayList<>();
     private SleepState sleepState = SleepState.UNKNOWN;
     private long clockMs = -1;
     private long lastFrameMs = -1;
+    private long lastUsableFrameMs = -1;
+    private long gapStartedAtMs = -1;
     private long closedSinceMs = -1;
     private long wakeSinceMs = -1;
     private long sleepStartedAtMs = -1;
@@ -103,9 +142,14 @@ public final class CareEngine {
     private long hiddenSinceMs = -1;
     private boolean hiddenAlerted;
     private boolean calibrated;
+    private PostureState postureState = PostureState.UNOBSERVABLE;
+    private long referenceSinceMs = -1;
+    private int referenceSamples;
     private float baselinePitch;
     private float baselineRoll;
+    private float referenceYaw;
     private long postureSinceMs = -1;
+    private PostureDirection postureDirection;
     private boolean postureAlerted;
     private long lastPostureAlertMs = -1;
     private long lastVomitingAlertMs = -1;
@@ -113,6 +157,13 @@ public final class CareEngine {
 
     public CareEngine(Config config) {
         this.config = Objects.requireNonNull(config, "config");
+    }
+
+    public synchronized void beginTrip(long nowMs) {
+        if (nowMs < 0) throw new IllegalArgumentException("Trip start must be nonnegative");
+        reset();
+        clockMs = nowMs;
+        gapStartedAtMs = nowMs;
     }
 
     public synchronized Result accept(Frame frame) {
@@ -133,12 +184,15 @@ public final class CareEngine {
         checkPosture(frame);
         if (frame.leftEyeOpen < 0 || frame.rightEyeOpen < 0) {
             finishSleep();
+            startGap(frame.timestampMs);
             sleepState = SleepState.UNKNOWN;
             closedSinceMs = -1;
             wakeSinceMs = -1;
             return result(false);
         }
 
+        finishGap(frame.timestampMs);
+        lastUsableFrameMs = frame.timestampMs;
         boolean closed = frame.leftEyeOpen <= config.closedEyeThreshold
                 && frame.rightEyeOpen <= config.closedEyeThreshold;
         boolean quiet = false;
@@ -185,6 +239,14 @@ public final class CareEngine {
         return result(false);
     }
 
+    public synchronized Result markObservationUnavailable(long nowMs) {
+        advanceClock(nowMs);
+        expireObservation(nowMs);
+        loseObservation(nowMs);
+        checkVisibility(nowMs);
+        return result(false);
+    }
+
     public synchronized Result markVomitingSuspected(long nowMs) {
         advanceClock(nowMs);
         expireObservation(nowMs);
@@ -196,10 +258,18 @@ public final class CareEngine {
         return result(false);
     }
 
+    public synchronized void resetPostureReference() {
+        calibrated = false;
+        suspendPosture();
+        postureAlerted = false;
+    }
+
     public synchronized void reset() {
         sleepState = SleepState.UNKNOWN;
         clockMs = -1;
         lastFrameMs = -1;
+        lastUsableFrameMs = -1;
+        gapStartedAtMs = -1;
         closedSinceMs = -1;
         wakeSinceMs = -1;
         sleepStartedAtMs = -1;
@@ -207,53 +277,106 @@ public final class CareEngine {
         finishedSleepMs = 0;
         hiddenSinceMs = -1;
         hiddenAlerted = false;
-        calibrated = false;
-        postureSinceMs = -1;
-        postureAlerted = false;
+        resetPostureReference();
         lastPostureAlertMs = -1;
         lastVomitingAlertMs = -1;
         alerts.clear();
+        sleepIntervals.clear();
+        observationGaps.clear();
     }
 
     private void checkPosture(Frame frame) {
-        if (!calibrated) {
-            baselinePitch = frame.pitchDegrees;
-            baselineRoll = frame.rollDegrees;
-            calibrated = true;
+        if (Math.abs(frame.yawDegrees) > POSTURE_MAX_YAW_DEGREES) {
+            suspendPosture();
+            return;
         }
-        boolean changed = angleDistance(frame.pitchDegrees, baselinePitch) >= config.postureDegrees
-                || angleDistance(frame.rollDegrees, baselineRoll) >= config.postureDegrees;
-        if (!changed) {
+        if (!calibrated) {
+            updatePostureReference(frame);
+            return;
+        }
+        postureState = PostureState.OBSERVED;
+        PostureDirection direction = postureDirection(frame);
+        if (direction == null) {
             postureSinceMs = -1;
+            postureDirection = null;
             postureAlerted = false;
-        } else {
-            if (postureSinceMs < 0) postureSinceMs = frame.timestampMs;
-            if (!postureAlerted && frame.timestampMs - postureSinceMs >= config.postureAfterMs
-                    && (lastPostureAlertMs < 0
-                    || frame.timestampMs - lastPostureAlertMs >= ALERT_COOLDOWN_MS)) {
-                addAlert(AlertKind.POSTURE,
-                        "고개가 처음 자세와 크게 달라진 상태가 이어져요. 안전하게 정차한 뒤 확인해 주세요.",
-                        frame.timestampMs);
-                postureAlerted = true;
-                lastPostureAlertMs = frame.timestampMs;
-            }
+            return;
+        }
+        if (direction != postureDirection) {
+            postureDirection = direction;
+            postureSinceMs = frame.timestampMs;
+        }
+        if (!postureAlerted && frame.timestampMs - postureSinceMs >= config.postureAfterMs
+                && (lastPostureAlertMs < 0
+                || frame.timestampMs - lastPostureAlertMs >= ALERT_COOLDOWN_MS)) {
+            String message = switch (direction) {
+                case DOWN -> "고개가 앞으로 크게 숙여진 상태가 이어져요.";
+                case UP -> "고개가 위로 크게 젖혀진 상태가 이어져요.";
+                case SIDE -> "고개가 옆으로 크게 기운 상태가 이어져요.";
+            };
+            addAlert(AlertKind.POSTURE, message + " 안전하게 정차한 뒤 확인해 주세요.",
+                    frame.timestampMs);
+            postureAlerted = true;
+            lastPostureAlertMs = frame.timestampMs;
         }
     }
 
+    private void updatePostureReference(Frame frame) {
+        postureState = PostureState.CALIBRATING;
+        if (referenceSinceMs < 0
+                || angleDistance(frame.pitchDegrees, baselinePitch) > POSTURE_REFERENCE_JITTER_DEGREES
+                || angleDistance(frame.rollDegrees, baselineRoll) > POSTURE_REFERENCE_JITTER_DEGREES
+                || angleDistance(frame.yawDegrees, referenceYaw) > POSTURE_REFERENCE_JITTER_DEGREES) {
+            referenceSinceMs = frame.timestampMs;
+            referenceSamples = 1;
+            baselinePitch = frame.pitchDegrees;
+            baselineRoll = frame.rollDegrees;
+            referenceYaw = frame.yawDegrees;
+            return;
+        }
+        referenceSamples++;
+        if (referenceSamples >= 3 && frame.timestampMs - referenceSinceMs >= POSTURE_REFERENCE_MS) {
+            calibrated = true;
+            postureState = PostureState.OBSERVED;
+        }
+    }
+
+    private PostureDirection postureDirection(Frame frame) {
+        float pitch = angleDifference(frame.pitchDegrees, baselinePitch);
+        if (pitch <= -config.postureDegrees) return PostureDirection.DOWN;
+        if (pitch >= config.postureDegrees) return PostureDirection.UP;
+        if (angleDistance(frame.rollDegrees, baselineRoll) >= config.postureDegrees) {
+            return PostureDirection.SIDE;
+        }
+        return null;
+    }
+
+    private void suspendPosture() {
+        postureState = PostureState.UNOBSERVABLE;
+        referenceSinceMs = -1;
+        referenceSamples = 0;
+        postureSinceMs = -1;
+        postureDirection = null;
+    }
+
     private void expireObservation(long nowMs) {
-        if (lastFrameMs >= 0 && nowMs - lastFrameMs > config.visibilityAfterMs) {
+        if (lastFrameMs < 0) return;
+        long frameGapMs = nowMs - lastFrameMs;
+        if (frameGapMs > config.visibilityAfterMs) {
             loseObservation(lastFrameMs);
             checkVisibility(nowMs);
+        } else if (frameGapMs > POSTURE_FRAME_GAP_MS) {
+            suspendPosture();
         }
     }
 
     private void loseObservation(long sinceMs) {
         finishSleep();
+        startGap(sinceMs);
         sleepState = SleepState.UNKNOWN;
         closedSinceMs = -1;
         wakeSinceMs = -1;
-        postureSinceMs = -1;
-        postureAlerted = false;
+        suspendPosture();
         if (hiddenSinceMs < 0) hiddenSinceMs = sinceMs;
     }
 
@@ -268,10 +391,24 @@ public final class CareEngine {
 
     private void finishSleep() {
         if (sleepStartedAtMs >= 0) {
-            finishedSleepMs += Math.max(0, sleepObservedUntilMs - sleepStartedAtMs);
+            sleepIntervals.add(new Interval(sleepStartedAtMs, sleepObservedUntilMs));
+            finishedSleepMs += sleepObservedUntilMs - sleepStartedAtMs;
             sleepStartedAtMs = -1;
             sleepObservedUntilMs = -1;
         }
+    }
+
+    private void startGap(long sinceMs) {
+        if (gapStartedAtMs < 0) {
+            gapStartedAtMs = lastUsableFrameMs >= 0 ? lastUsableFrameMs : sinceMs;
+        }
+    }
+
+    private void finishGap(long endMs) {
+        if (gapStartedAtMs >= 0 && endMs > gapStartedAtMs) {
+            observationGaps.add(new Interval(gapStartedAtMs, endMs));
+        }
+        gapStartedAtMs = -1;
     }
 
     private void advanceClock(long nowMs) {
@@ -284,7 +421,9 @@ public final class CareEngine {
     private void validateFrame(Frame frame) {
         if (!probability(frame.leftEyeOpen) || !probability(frame.rightEyeOpen)
                 || !Float.isFinite(frame.pitchDegrees) || !Float.isFinite(frame.rollDegrees)
-                || Math.abs(frame.pitchDegrees) > 180 || Math.abs(frame.rollDegrees) > 180) {
+                || !Float.isFinite(frame.yawDegrees)
+                || Math.abs(frame.pitchDegrees) > 180 || Math.abs(frame.rollDegrees) > 180
+                || Math.abs(frame.yawDegrees) > 180) {
             throw new IllegalArgumentException("Invalid eye probability or head angle");
         }
     }
@@ -294,8 +433,14 @@ public final class CareEngine {
     }
 
     private static float angleDistance(float angle, float baseline) {
-        float difference = Math.abs(angle - baseline);
-        return Math.min(difference, 360 - difference);
+        return Math.abs(angleDifference(angle, baseline));
+    }
+
+    private static float angleDifference(float angle, float baseline) {
+        float difference = angle - baseline;
+        if (difference > 180) return difference - 360;
+        if (difference < -180) return difference + 360;
+        return difference;
     }
 
     private void addAlert(AlertKind kind, String message, long timestampMs) {
@@ -304,8 +449,14 @@ public final class CareEngine {
     }
 
     private Result result(boolean quiet) {
-        long activeMs = sleepStartedAtMs < 0 ? 0 : sleepObservedUntilMs - sleepStartedAtMs;
-        return new Result(sleepState, finishedSleepMs + Math.max(0, activeMs), sleepStartedAtMs,
-                Collections.unmodifiableList(new ArrayList<>(alerts)), quiet);
+        Interval currentSleep = sleepStartedAtMs < 0 ? null
+                : new Interval(sleepStartedAtMs, sleepObservedUntilMs);
+        Interval currentGap = gapStartedAtMs < 0 ? null : new Interval(gapStartedAtMs, clockMs);
+        long activeMs = currentSleep == null ? 0 : currentSleep.endMs - currentSleep.startMs;
+        return new Result(sleepState, finishedSleepMs + activeMs, sleepStartedAtMs,
+                Collections.unmodifiableList(new ArrayList<>(alerts)), quiet,
+                Collections.unmodifiableList(new ArrayList<>(sleepIntervals)),
+                Collections.unmodifiableList(new ArrayList<>(observationGaps)), currentSleep, currentGap,
+                postureState);
     }
 }

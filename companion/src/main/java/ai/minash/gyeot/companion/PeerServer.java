@@ -19,9 +19,10 @@ final class PeerServer extends NanoHTTPD {
     private final Supplier<byte[]> preview;
     private final Function<String, String> command;
 
-    PeerServer(String token, Supplier<String> state, Supplier<byte[]> preview,
+    PeerServer(PeerTls tls, String token, Supplier<String> state, Supplier<byte[]> preview,
                Function<String, String> command) {
         super(8787);
+        makeSecure(tls.socketFactory, tls.protocols);
         authorization = ("Bearer " + token).getBytes(StandardCharsets.UTF_8);
         this.state = state;
         this.preview = preview;
@@ -77,7 +78,9 @@ final class PeerServer extends NanoHTTPD {
             JSONObject request = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
             String action = request.getString("action");
             if (!action.equals("QUIET") && !action.equals("PAUSE")
-                    && !action.equals("RESUME") && !action.equals("RESET")) {
+                    && !action.equals("RESUME") && !action.equals("DIM") && !action.equals("RESET")
+                    && !action.equals("LOCK_SCREEN") && !action.equals("KIDS_PAUSE")
+                    && !action.equals("KIDS_RESUME")) {
                 return error(Response.Status.BAD_REQUEST, "unknown_action");
             }
             String result = command.apply(action);

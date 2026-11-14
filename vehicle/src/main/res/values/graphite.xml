@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="graphite_background">#292F34</color>
+    <color name="graphite_footer">#1D2328</color>
+    <color name="graphite_primary">#EEF0F2</color>
+    <color name="graphite_secondary">#3E474F</color>
+    <color name="graphite_map_outline">#97A2AA</color>
+</resources>
