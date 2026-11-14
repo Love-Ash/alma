@@ -1,13 +1,11 @@
 # Alma(알마) 설치 및 실행
 
-팀 With(위드)
-
 알마는 뒷좌석 아이가 잠드는 듯할 때 휴대폰에서 재생 중인 영상의 소리를 낮추고 앱 화면을 어둡게 합니다. 운전자는 주차한 뒤 아이의 모습이 담긴 최근 카메라 화면을 확인할 수 있습니다.
 
 | 설치 위치 | 서명 APK | 시험 환경 |
 | --- | --- | --- |
-| 차량 | [With_Alma_release.apk](apk/With_Alma_release.apk) | Pleos Connect Emulator 2.1.0, Android API 34, 2560 × 1440 가로 화면 |
-| 뒷좌석 휴대폰 | [With_AlmaCompanion_release.apk](apk/With_AlmaCompanion_release.apk) | Android API 34, 1080 × 2400 세로 화면, 전면 카메라 |
+| 차량 | [권민재_Alma_release.apk](apk/권민재_Alma_release.apk) | Pleos Connect Emulator 2.1.0, Android API 34, 2560 × 1440 가로 화면 |
+| 뒷좌석 휴대폰 | [권민재_AlmaCompanion_release.apk](apk/권민재_AlmaCompanion_release.apk) | Android API 34, 1080 × 2400 세로 화면, 전면 카메라 |
 
 ## 두 앱 연결
 
@@ -16,8 +14,8 @@
 ```text
 adb devices
 adb -s CAR_SERIAL shell am get-current-user
-adb -s CAR_SERIAL install -r --user CAR_USER_ID apk/With_Alma_release.apk
-adb -s PHONE_SERIAL install -r apk/With_AlmaCompanion_release.apk
+adb -s CAR_SERIAL install -r --user CAR_USER_ID apk/권민재_Alma_release.apk
+adb -s PHONE_SERIAL install -r apk/권민재_AlmaCompanion_release.apk
 adb -s PHONE_SERIAL forward --no-rebind tcp:18787 tcp:8787
 adb -s CAR_SERIAL reverse --no-rebind tcp:8787 tcp:18787
 adb -s CAR_SERIAL forward --no-rebind tcp:18088 tcp:8088
